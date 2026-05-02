@@ -23,12 +23,18 @@ That's it. No cloud accounts. No telemetry. No phone-home. The source for every 
 
 ## A real heads-up about your computer
 
-The first time you talk to your agent, the model loads from disk into RAM. It's a 5 GB load. **Your computer will probably feel sluggish for 30-60 seconds during that load.** The mouse may stutter. Apps may not respond instantly. This is normal. After load, you can chat smoothly until you stop the gateway.
+The agent runs locally. That means your machine actually does the work. Two times this is noticeable:
 
-If your computer stays sluggish past that first load — instead of just during it — your machine is below the recommended floor. Two options:
+**First-prompt model load (30-60 seconds, once per session).** When you start the gateway and ask it the first thing, the model loads from disk into RAM. It's a 5 GB load. Your computer will feel sluggish during the load. Mouse may stutter. Apps may not respond instantly. This is normal. After load, the model stays warm.
 
-1. Lower the memory cap in `docker-compose.yml` under `services.ollama.deploy.resources.limits.memory`. Default is `8G`. Try `6G`. You'll trade some speed for not-locking-up your other apps.
+**Every inference, every time (a few seconds, every prompt).** The model has to compute the response. On CPU that's tokens-per-second territory and your machine is doing real work the whole time it's generating. On GPU it's much faster but still ramps the GPU to 100% briefly. If you're trying to do a video call AND chat with the agent at the same time, expect the video call to glitch. Don't run the agent while you're doing memory-heavy work like a build or a virtual machine.
+
+If the sluggishness sticks around between prompts — meaning your apps are slow even when the agent is idle — your machine is below the recommended floor. Two options:
+
+1. Lower the memory cap in `docker-compose.yml` under `services.ollama.deploy.resources.limits.memory`. Default is `8G`. Try `6G`. You'll trade some speed for not locking up your other apps.
 2. Stop the stack when you're not using it. `docker compose down` parks everything; `docker compose up -d` brings it back in seconds.
+
+If you're on a laptop without a GPU and you find the per-prompt latency painful, this is a hardware ceiling, not an installer issue. The model doing real math on a CPU is just slow. The fix is either a GPU or a smaller model (uncomment qwen2.5:3b in `docker-compose.yml` once we add it).
 
 ## Hardware floor (the installer checks this for you)
 
