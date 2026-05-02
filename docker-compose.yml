@@ -1,0 +1,115 @@
+# OAL Quickstart - the whole stack as one compose file.
+#
+# What this gives you:
+#   - Ollama serving llama3.1:8b on the docker network only (not exposed to host)
+#   - OpenClaw gateway listening on 127.0.0.1:18789 (loopback only)
+#   - One persistent volume for model weights (~5 GB)
+#   - Memory limits so the LLM can't take down your GUI
+#
+# Start:    docker compose up -d
+# Stop:     docker compose down
+# Logs:     docker compose logs -f
+# Shell:    docker compose exec gateway openclaw chat --agent main
+#
+# RESOURCE LIMITS (deploy.resources.limits):
+#   We cap Ollama at 8 GB RAM by default. Without this, llama3.1:8b can spike
+#   to consume all your free memory during the first few prompts and freeze
+#   your desktop. If you have 32+ GB raise the limit; if you have 8 GB lower
+#   it (you'll trade speed for not-locking-up).
+#
+# GPU PASSTHROUGH (NVIDIA):
+#   Uncomment the `runtime: nvidia` and `deploy.resources.reservations.devices`
+#   blocks if you want GPU acceleration. You also need nvidia-container-toolkit
+#   installed on the host. Without GPU, inference runs on CPU at ~1 tok/sec.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: oal-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - oal-net
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 6G
+    # GPU passthrough (NVIDIA) - uncomment if you have nvidia-container-toolkit:
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # One-shot init container that pulls the starter model on first run.
+  # Exits successfully once the model is present. Compose treats successful
+  # exit as healthy for `depends_on: condition: service_completed_successfully`.
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: oal-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - oal-net
+    volumes:
+      - ollama-models:/root/.ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export OLLAMA_HOST=http://ollama:11434
+        echo "Waiting for ollama API..."
+        until ollama list >/dev/null 2>&1; do sleep 2; done
+        if ollama list | grep -q '^llama3.1:8b'; then
+          echo "Model already present. Skipping pull."
+          exit 0
+        fi
+        echo "Pulling llama3.1:8b (~5 GB - first run only, slow on flaky internet)"
+        for attempt in 1 2 3; do
+          if ollama pull llama3.1:8b; then exit 0; fi
+          echo "pull attempt $$attempt failed, retrying in 10s"
+          sleep 10
+        done
+        echo "Pull failed 3 times. Check internet and re-run: docker compose up ollama-init"
+        exit 1
+    restart: "no"
+
+  gateway:
+    image: ghcr.io/openclaw/openclaw:main
+    container_name: oal-gateway
+    restart: unless-stopped
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:18789:18789"
+    volumes:
+      - ./openclaw-state:/home/node/.openclaw
+    networks:
+      - oal-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+networks:
+  oal-net:
+    driver: bridge
+
+volumes:
+  ollama-models:
+    name: oal-ollama-models

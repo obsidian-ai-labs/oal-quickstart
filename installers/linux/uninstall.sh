@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
-# OAL Quickstart - Linux uninstaller. Removes the agent, keeps a backup.
+# OAL Quickstart - Linux uninstaller. Removes the whole stack cleanly.
 set -euo pipefail
 
 note() { printf "\n>>> %s\n" "$*"; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$SCRIPT_DIR"
 
-read -rp "This will remove OpenClaw and the agent workspace. Ollama (and your downloaded models) stay unless you say so. Continue? [y/N] " ans
+read -rp "Stop and remove containers + workspace? [y/N] " ans
 [[ "$ans" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
 
-note "Backing up workspace to ~/.openclaw.bak.$(date +%Y%m%d-%H%M%S)"
-if [[ -d "$HOME/.openclaw" ]]; then
-  mv "$HOME/.openclaw" "$HOME/.openclaw.bak.$(date +%Y%m%d-%H%M%S)"
-fi
+note "Backing up your workspace to ~/.oal-quickstart-bak.$(date +%Y%m%d-%H%M%S)/"
+BAK="$HOME/.oal-quickstart-bak.$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BAK"
+[[ -d "$SCRIPT_DIR/openclaw-state/workspace" ]] && cp -r "$SCRIPT_DIR/openclaw-state/workspace" "$BAK/"
+[[ -f "$SCRIPT_DIR/openclaw-state/openclaw.json" ]] && cp "$SCRIPT_DIR/openclaw-state/openclaw.json" "$BAK/"
+echo "    backup: $BAK"
 
-note "Removing OpenClaw binary"
-if command -v bun >/dev/null 2>&1; then
-  bun pm uninstall -g @openclaw/openclaw || true
-fi
+note "docker compose down"
+docker compose down 2>&1 | sed 's/^/    /' || sg docker -c "docker compose down"
 
-read -rp "Also remove Ollama and your local models (frees ~5-15 GB)? [y/N] " ans
+read -rp "Also remove the 5 GB model volume (oal-ollama-models)? [y/N] " ans
 if [[ "$ans" =~ ^[Yy]$ ]]; then
-  note "Removing Ollama"
-  sudo rm -f /usr/local/bin/ollama 2>/dev/null || rm -f "$HOME/.local/bin/ollama" 2>/dev/null || true
-  rm -rf "$HOME/.ollama"
+  docker volume rm oal-ollama-models 2>/dev/null || sg docker -c "docker volume rm oal-ollama-models" || true
+  note "Volume removed"
+fi
+
+read -rp "Remove the openclaw-state/ directory inside the repo? [y/N] " ans
+if [[ "$ans" =~ ^[Yy]$ ]]; then
+  rm -rf "$SCRIPT_DIR/openclaw-state"
+  note "openclaw-state/ removed (backup is at $BAK)"
 fi
 
 echo
-echo "Uninstall complete. Workspace backup is at ~/.openclaw.bak.*."
-echo "Remove that backup yourself when you're sure you don't want it."
+echo "Uninstall complete. Backup at $BAK if you change your mind."
+echo "Docker itself is left alone — remove with your package manager if you want."
